@@ -1,0 +1,86 @@
+name: TesterArmy Mobile CI
+description: Upload a mobile app to TesterArmy, run AI-powered tests, and clean up.
+branding:
+  icon: smartphone
+  color: purple
+
+inputs:
+  app_path:
+    description: Path to the app build file or directory to upload.
+    required: true
+  api_key:
+    description: TesterArmy API key.
+    required: true
+  project_id:
+    description: TesterArmy project ID.
+    required: true
+  webhook_url:
+    description: TesterArmy group webhook URL.
+    required: true
+  delete_app_after_run:
+    description: Delete the uploaded app after the run finishes, even when tests fail.
+    required: false
+    default: "true"
+  remove_after:
+    description: Seconds after which TesterArmy should remove the upload. Set to 0 to disable.
+    required: false
+    default: "3600"
+  poll_interval_seconds:
+    description: Polling interval in seconds while waiting for run completion.
+    required: false
+    default: "10"
+  timeout_seconds:
+    description: Maximum wait time in seconds before timing out.
+    required: false
+    default: "1800"
+
+outputs:
+  app_id:
+    description: Uploaded TesterArmy app ID.
+    value: ${{ steps.upload.outputs.app_id }}
+  run_ids:
+    description: JSON array of TesterArmy run IDs created by the webhook.
+    value: ${{ steps.run.outputs.run_ids }}
+  overall_status:
+    description: Overall status of the test run (passed, failed, or timed_out).
+    value: ${{ steps.run.outputs.overall_status }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v5
+      with:
+        node-version: "24"
+
+    - id: upload
+      name: Upload mobile app
+      shell: bash
+      env:
+        APP_PATH: ${{ inputs.app_path }}
+        API_KEY: ${{ inputs.api_key }}
+        PROJECT_ID: ${{ inputs.project_id }}
+        REMOVE_AFTER: ${{ inputs.remove_after }}
+      run: node --experimental-strip-types "${{ github.action_path }}/src/upload-mobile.ts"
+
+    - id: run
+      name: Run tests
+      shell: bash
+      env:
+        TESTERARMY_API_KEY: ${{ inputs.api_key }}
+        TESTERARMY_WEBHOOK_URL: ${{ inputs.webhook_url }}
+        TESTERARMY_APP_ID: ${{ steps.upload.outputs.app_id }}
+        TESTERARMY_COMMIT_SHA: ${{ github.sha }}
+        POLL_INTERVAL_SECONDS: ${{ inputs.poll_interval_seconds }}
+        TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
+      run: node --experimental-strip-types "${{ github.action_path }}/src/run-tests.ts"
+
+    - name: Delete uploaded app
+      if: ${{ always() && inputs.delete_app_after_run == 'true' && steps.upload.outputs.app_id != '' }}
+      shell: bash
+      env:
+        TESTERARMY_API_KEY: ${{ inputs.api_key }}
+        TESTERARMY_PROJECT_ID: ${{ inputs.project_id }}
+        TESTERARMY_WEBHOOK_URL: ${{ inputs.webhook_url }}
+        TESTERARMY_APP_ID: ${{ steps.upload.outputs.app_id }}
+      run: node --experimental-strip-types "${{ github.action_path }}/src/delete-mobile-app.ts"
