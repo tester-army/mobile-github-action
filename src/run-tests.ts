@@ -11,6 +11,8 @@ import {
   computeOverallStatus,
   extractRunIds,
   formatRunFailure,
+  formatRunProgress,
+  formatRunSuccess,
   mapRunEntry,
   type RunEntry,
 } from "./run-tests-lib.ts";
@@ -53,15 +55,24 @@ export async function main(): Promise<void> {
     );
   }
 
+  console.log(`Triggered ${runIds.length} TesterArmy run(s): ${runIds.join(", ")}`);
+
   const apiBase = parseApiBase(webhookUrl);
   setOutput("run_ids", JSON.stringify(runIds));
 
   const deadline = Date.now() + timeoutSeconds * 1000;
+  let lastProgressMessage = "";
 
   while (true) {
     const runs = await Promise.all(
       runIds.map((runId: string) => fetchRunEntry(apiBase, apiKey, runId)),
     );
+
+    const progressMessage = formatRunProgress(runs);
+    if (progressMessage !== lastProgressMessage) {
+      console.log(progressMessage);
+      lastProgressMessage = progressMessage;
+    }
 
     const overallStatus = computeOverallStatus(runs);
 
@@ -71,13 +82,14 @@ export async function main(): Promise<void> {
     }
 
     if (overallStatus === "passed") {
+      console.log(formatRunSuccess(runs));
       setOutput("overall_status", overallStatus);
       return;
     }
 
     if (Date.now() >= deadline) {
       setOutput("overall_status", "timed_out");
-      throw new Error("Timed out waiting for TesterArmy runs to finish");
+      throw new Error(`Timed out waiting for TesterArmy runs to finish\n\n${formatRunProgress(runs)}`);
     }
 
     await sleep(pollIntervalSeconds * 1000);

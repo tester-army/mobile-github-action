@@ -3,9 +3,11 @@ export type OverallStatus = "running" | "passed" | "failed";
 
 export interface RunEntry {
   id: string;
+  name: string;
   status: string;
   result: string;
   state: RunState;
+  duration: string;
 }
 
 export interface TriggerRequestOptions {
@@ -20,6 +22,63 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function readLowercaseString(value: unknown, fallback = "unknown"): string {
   return typeof value === "string" && value ? value.toLowerCase() : fallback;
+}
+
+function readString(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function formatDuration(durationMs: unknown): string {
+  const value = Number(durationMs);
+  if (!Number.isFinite(value) || value <= 0) {
+    return "-";
+  }
+
+  const totalSeconds = Math.floor(value / 1000);
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+
+  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`;
+}
+
+function stateLabel(state: RunState): string {
+  switch (state) {
+    case "passed":
+      return "PASS";
+    case "failed":
+      return "FAIL";
+    case "pending":
+      return "RUNS";
+  }
+}
+
+function truncateId(id: string): string {
+  return id.slice(0, 8);
+}
+
+function divider(title: string): string {
+  return `${"─".repeat(12)} ${title} ${"─".repeat(12)}`;
+}
+
+function summaryCounts(runs: RunEntry[]): Record<RunState, number> {
+  return runs.reduce(
+    (summary, run) => {
+      summary[run.state] += 1;
+      return summary;
+    },
+    { passed: 0, failed: 0, pending: 0 } as Record<RunState, number>,
+  );
+}
+
+function formatSummaryCounts(runs: RunEntry[]): string {
+  const counts = summaryCounts(runs);
+  return `${counts.failed} failed | ${counts.passed} passed | ${counts.pending} pending | ${runs.length} total`;
+}
+
+function formatRunLine(run: RunEntry): string {
+  const durationSuffix = run.duration === "-" ? "" : ` (${run.duration})`;
+  return `${stateLabel(run.state)}  testerarmy  ${run.name} > ${truncateId(run.id)}${durationSuffix}`;
 }
 
 export function classifyRun(status: string, result: string): RunState {
@@ -38,6 +97,10 @@ export function classifyRun(status: string, result: string): RunState {
 
   if (completedStatuses.includes(status)) {
     return passResults.includes(result) ? "passed" : "failed";
+  }
+
+  if (status === "unknown" && result === "unknown") {
+    return "pending";
   }
 
   console.warn(`Unrecognized run status "${status}" (result: "${result}"), treating as pending`);
@@ -83,12 +146,15 @@ export function mapRunEntry(runId: string, data: unknown): RunEntry {
   const output = asRecord(payload.output);
   const status = readLowercaseString(payload.status);
   const result = readLowercaseString(output.result ?? payload.result);
+  const fallbackName = `Run ${truncateId(runId)}`;
 
   return {
     id: runId,
+    name: readString(output.featureName ?? payload.name ?? payload.id, fallbackName),
     status,
     result,
     state: classifyRun(status, result),
+    duration: formatDuration(payload.durationMs),
   };
 }
 
@@ -104,7 +170,23 @@ export function computeOverallStatus(runs: RunEntry[]): OverallStatus {
   return "running";
 }
 
+export function summarizeRuns(runs: RunEntry[]): string {
+  return formatSummaryCounts(runs);
+}
+
+export function formatRunProgress(runs: RunEntry[]): string {
+  return `RUNS  testerarmy  ${summarizeRuns(runs)}`;
+}
+
+export function formatRunReport(runs: RunEntry[]): string {
+  const lines = [divider("TesterArmy"), "", ...runs.map(formatRunLine), "", `Runs  ${summarizeRuns(runs)}`];
+  return lines.join("\n");
+}
+
 export function formatRunFailure(runs: RunEntry[]): string {
-  const details = runs.map((run) => `${run.id}\t${run.status}\t${run.result}`).join("\n");
-  return `One or more TesterArmy runs failed\n${details}`;
+  return `FAIL  TesterArmy\n\n${formatRunReport(runs)}`;
+}
+
+export function formatRunSuccess(runs: RunEntry[]): string {
+  return `PASS  TesterArmy\n\n${formatRunReport(runs)}`;
 }
