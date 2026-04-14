@@ -10,6 +10,12 @@ import {
   requestJson,
   handleMainError,
 } from "./github-actions-utils.ts";
+import {
+  buildUploadConfirmPayload,
+  buildUploadInitPayload,
+  parseConfirmedAppId,
+  parseUploadInitResponse,
+} from "./upload-mobile-lib.ts";
 
 const API_BASE = "https://tester.army/api/v1";
 
@@ -49,7 +55,7 @@ function zipDirectory(appPath: string): string {
   return archivePath;
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const apiKey = requireEnv("API_KEY");
   const projectId = requireEnv("PROJECT_ID");
   const appPath = requireEnv("APP_PATH");
@@ -71,15 +77,6 @@ async function main(): Promise<void> {
     const appName = path.basename(archivePath);
     const appSize = fs.statSync(archivePath).size;
 
-    const initPayload: Record<string, unknown> = {
-      filename: appName,
-      fileSize: appSize,
-    };
-
-    if (removeAfter !== "0") {
-      initPayload.removeAfter = Number(removeAfter);
-    }
-
     const initResponse = await requestJson(
       `${API_BASE}/projects/${projectId}/mobile/upload`,
       {
@@ -88,30 +85,13 @@ async function main(): Promise<void> {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(initPayload),
+        body: JSON.stringify(buildUploadInitPayload(appName, appSize, removeAfter)),
       },
     );
 
-    const uploadUrl = String(initResponse.data.uploadUrl ?? "");
-    const storageKey = String(initResponse.data.storageKey ?? "");
-
-    if (!uploadUrl || !storageKey) {
-      throw new Error(
-        `Upload initiation response is missing uploadUrl or storageKey\n${JSON.stringify(initResponse.data, null, 2)}`,
-      );
-    }
+    const { uploadUrl, storageKey } = parseUploadInitResponse(initResponse.data);
 
     await uploadBinary(uploadUrl, archivePath);
-
-    const confirmPayload: Record<string, unknown> = {
-      storageKey,
-      filename: appName,
-      fileSize: appSize,
-    };
-
-    if (removeAfter !== "0") {
-      confirmPayload.removeAfter = Number(removeAfter);
-    }
 
     const confirmResponse = await requestJson(
       `${API_BASE}/projects/${projectId}/mobile/upload/confirm`,
@@ -121,18 +101,13 @@ async function main(): Promise<void> {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(confirmPayload),
+        body: JSON.stringify(
+          buildUploadConfirmPayload(storageKey, appName, appSize, removeAfter),
+        ),
       },
     );
 
-    const appId = String(confirmResponse.data?.app?.id ?? "");
-    if (!appId) {
-      throw new Error(
-        `Upload confirmation response did not include app.id\n${JSON.stringify(confirmResponse.data, null, 2)}`,
-      );
-    }
-
-    setOutput("app_id", appId);
+    setOutput("app_id", parseConfirmedAppId(confirmResponse.data));
   } finally {
     if (archiveCreated && fs.existsSync(archivePath)) {
       fs.rmSync(archivePath, { force: true });
@@ -140,4 +115,6 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch(handleMainError);
+if (import.meta.main) {
+  main().catch(handleMainError);
+}
