@@ -6,16 +6,13 @@ A GitHub Action that uploads a mobile app to [TesterArmy](https://tester.army), 
 
 ```
 Upload app binary ──► Trigger test webhook ──► Poll for results ──► Delete app
-                                                     │
-                                              GitHub Step Summary
-                                           (pass/fail, screenshots)
 ```
 
-1. **Upload** — zips the app if it's a directory (e.g. `.app` bundle), uploads to TesterArmy via their API
-2. **Test** — triggers a group webhook, polls each run until all complete or timeout
-3. **Cleanup** — deletes the uploaded app (runs even if tests fail)
+1. **Upload** — zips the app if it's a directory (for example, a `.app` bundle), then uploads it to TesterArmy via their API
+2. **Test** — triggers a group webhook, polls each run until all complete or timeout, and fails the step if any run fails
+3. **Cleanup** — deletes the uploaded app when configured, even if tests fail
 
-Results are written to [GitHub Step Summary](https://github.blog/2022-05-09-supercharging-github-actions-with-job-summaries/) with per-test status, duration, issues, and screenshots.
+The action exposes run IDs and overall status through standard GitHub Action outputs.
 
 ## Usage
 
@@ -79,11 +76,16 @@ jobs:
 | `run_ids` | JSON array of TesterArmy run IDs |
 | `overall_status` | `passed`, `failed`, or `timed_out` |
 
+## Development
+
+- Run `npm run check` for syntax validation.
+- Run `npm test` for the built-in Node test suite.
+- The repo intentionally has no runtime dependencies; it relies on Node.js built-ins and `fetch`.
+
 ## Requirements
 
-- The action sets up Node.js 24 automatically (uses `--experimental-strip-types` to run TypeScript directly)
-- No external dependencies — only Node.js built-ins and the `fetch` API
-- The upload step uses `zip` which is pre-installed on all GitHub-hosted runners
+- The action sets up Node.js 24 automatically and uses `--experimental-strip-types` to run TypeScript directly
+- The upload step uses `zip`, which is pre-installed on GitHub-hosted runners
 
 ## License
 

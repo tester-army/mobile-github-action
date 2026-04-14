@@ -1,5 +1,10 @@
 import * as fs from "node:fs";
 
+export interface JsonResponse<T = unknown> {
+  data: T;
+  status: number;
+}
+
 export function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -20,10 +25,10 @@ export function setOutput(name: string, value: string): void {
   fs.appendFileSync(outputPath, `${name}=${value}\n`);
 }
 
-export async function requestJson(
+export async function requestJson<T = unknown>(
   url: string,
   init: RequestInit,
-): Promise<{ data: any; status: number }> {
+): Promise<JsonResponse<T>> {
   const response = await fetch(url, init);
   const responseText = await response.text();
 
@@ -33,15 +38,13 @@ export async function requestJson(
     );
   }
 
-  let data: any = {};
+  let data = {} as T;
   try {
     if (responseText) {
-      data = JSON.parse(responseText);
+      data = JSON.parse(responseText) as T;
     }
   } catch {
-    throw new Error(
-      `Failed to parse JSON response from ${url}\n${responseText}`,
-    );
+    throw new Error(`Failed to parse JSON response from ${url}\n${responseText}`);
   }
 
   return { data, status: response.status };

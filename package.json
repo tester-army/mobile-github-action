@@ -1,0 +1,9 @@
+{
+  "name": "testerarmy-mobile-github-action",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --experimental-strip-types -e \"await Promise.all([import('./src/github-actions-utils.ts'), import('./src/run-tests-lib.ts'), import('./src/upload-mobile-lib.ts'), import('./src/run-tests.ts'), import('./src/upload-mobile.ts'), import('./src/delete-mobile-app.ts')]);\"",
+    "test": "node --test --experimental-strip-types test/*.test.ts"
+  }
+}

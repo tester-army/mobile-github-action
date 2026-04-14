@@ -4,7 +4,7 @@ import {
   handleMainError,
 } from "./github-actions-utils.ts";
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const apiKey = requireEnv("TESTERARMY_API_KEY");
   const projectId = requireEnv("TESTERARMY_PROJECT_ID");
   const webhookUrl = requireEnv("TESTERARMY_WEBHOOK_URL");
@@ -30,4 +30,6 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch(handleMainError);
+if (import.meta.main) {
+  main().catch(handleMainError);
+}
