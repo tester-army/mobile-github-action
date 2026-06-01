@@ -1,6 +1,6 @@
 # TesterArmy Mobile CI
 
-A GitHub Action that uploads a mobile app to [TesterArmy](https://tester.army), runs AI-powered tests against it, and optionally cleans up the uploaded app.
+A GitHub Action that uploads an iOS Simulator app or Android APK to [TesterArmy](https://tester.army), runs AI-powered tests against it, and optionally cleans up the uploaded app.
 
 ## How it works
 
@@ -9,7 +9,7 @@ Upload app binary ──► Run TesterArmy CI group ──► Report result ─�
 ```
 
 1. **Upload** — calls `npx --yes testerarmy@latest upload-app` with the app path and project ID
-2. **Test** — calls `npx --yes testerarmy@latest ci` with the group ID, uploaded app ID, and commit SHA
+2. **Test** — calls `npx --yes testerarmy@latest ci` with the group ID, platform, uploaded app ID, and commit SHA
 3. **Cleanup** — delegates uploaded app cleanup to `testerarmy ci --delete-app-after-run` when enabled
 
 The action exposes the uploaded app ID and overall status through standard GitHub Action outputs.
@@ -20,6 +20,7 @@ The action exposes the uploaded app ID and overall status through standard GitHu
 - uses: tester-army/mobile-github-action@v1
   with:
     app_path: path/to/your.app
+    platform: ios
     api_key: ${{ secrets.TESTERARMY_API_KEY }}
     project_id: ${{ secrets.TESTERARMY_PROJECT_ID }}
     group_id: ${{ secrets.TESTERARMY_GROUP_ID }}
@@ -54,16 +55,43 @@ jobs:
       - run: echo "Tests finished with status ${{ steps.tests.outputs.overall_status }}"
 ```
 
+### iOS example
+
+```yaml
+- uses: tester-army/mobile-github-action@v1
+  with:
+    app_path: .build/my-app.app
+    platform: ios
+    api_key: ${{ secrets.TESTERARMY_API_KEY }}
+    project_id: ${{ secrets.TESTERARMY_PROJECT_ID }}
+    group_id: ${{ secrets.TESTERARMY_GROUP_ID }}
+```
+
+### Android example
+
+```yaml
+- uses: tester-army/mobile-github-action@v1
+  with:
+    app_path: app/build/outputs/apk/debug/app-debug.apk
+    platform: android
+    api_key: ${{ secrets.TESTERARMY_API_KEY }}
+    project_id: ${{ secrets.TESTERARMY_PROJECT_ID }}
+    group_id: ${{ secrets.TESTERARMY_GROUP_ID }}
+```
+
 ## Inputs
 
 | Input | Required | Default | Description |
 | --- | --- | --- | --- |
-| `app_path` | Yes | — | Path to the app build file or directory |
+| `app_path` | Yes | — | Path to the iOS Simulator `.app`/archive or Android `.apk` |
 | `api_key` | Yes | — | TesterArmy API key |
 | `project_id` | Yes | — | TesterArmy project ID |
 | `group_id` | Yes | — | TesterArmy group ID |
+| `platform` | No | `ios` | Mobile runtime platform: `ios` or `android` |
 | `delete_app_after_run` | No | `true` | Ask the CLI to delete the uploaded app after terminal test runs |
 | `remove_after` | No | `3600` | Seconds before TesterArmy auto-removes the upload. `0` to disable |
+
+Android support is APK-only. `.aab`, `.apks`, and `.xapk` are not supported by this action path.
 
 ## Outputs
 
