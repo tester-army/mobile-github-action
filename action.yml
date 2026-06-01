@@ -17,6 +17,10 @@ inputs:
   group_id:
     description: TesterArmy group ID.
     required: true
+  platform:
+    description: Mobile runtime platform. Use ios for iOS Simulator apps or android for APKs.
+    required: false
+    default: "ios"
   delete_app_after_run:
     description: Delete the uploaded app after terminal test runs.
     required: false
@@ -81,6 +85,7 @@ runs:
         APP_ID: ${{ steps.upload.outputs.app_id }}
         GROUP_ID: ${{ inputs.group_id }}
         PROJECT_ID: ${{ inputs.project_id }}
+        PLATFORM: ${{ inputs.platform }}
         COMMIT_SHA: ${{ github.sha }}
         DELETE_APP_AFTER_RUN: ${{ inputs.delete_app_after_run }}
         EVENT_NAME: ${{ github.event_name }}
@@ -94,6 +99,7 @@ runs:
           ci
           --group "$GROUP_ID"
           --project "$PROJECT_ID"
+          --platform "$PLATFORM"
           --app-id "$APP_ID"
           --commit-sha "$COMMIT_SHA"
           --output .testerarmy/ci-result.json
