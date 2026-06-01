@@ -14,33 +14,22 @@ inputs:
   project_id:
     description: TesterArmy project ID.
     required: true
-  webhook_url:
-    description: TesterArmy group webhook URL.
+  group_id:
+    description: TesterArmy group ID.
     required: true
   delete_app_after_run:
-    description: Delete the uploaded app after the run finishes, even when tests fail.
+    description: Delete the uploaded app after terminal test runs.
     required: false
     default: "true"
   remove_after:
     description: Seconds after which TesterArmy should remove the upload. Set to 0 to disable.
     required: false
     default: "3600"
-  poll_interval_seconds:
-    description: Polling interval in seconds while waiting for run completion.
-    required: false
-    default: "10"
-  timeout_seconds:
-    description: Maximum wait time in seconds before timing out.
-    required: false
-    default: "1800"
 
 outputs:
   app_id:
     description: Uploaded TesterArmy app ID.
     value: ${{ steps.upload.outputs.app_id }}
-  run_ids:
-    description: JSON array of TesterArmy run IDs created by the webhook.
-    value: ${{ steps.run.outputs.run_ids }}
   overall_status:
     description: Overall status of the test run (passed, failed, or timed_out).
     value: ${{ steps.run.outputs.overall_status }}
@@ -58,29 +47,74 @@ runs:
       shell: bash
       env:
         APP_PATH: ${{ inputs.app_path }}
-        API_KEY: ${{ inputs.api_key }}
         PROJECT_ID: ${{ inputs.project_id }}
         REMOVE_AFTER: ${{ inputs.remove_after }}
-      run: node --experimental-strip-types "${{ github.action_path }}/src/upload-mobile.ts"
+        TESTERARMY_API_KEY: ${{ inputs.api_key }}
+      run: |
+        set -euo pipefail
+
+        mkdir -p .testerarmy
+
+        args=(
+          upload-app
+          --app-path "$APP_PATH"
+          --project "$PROJECT_ID"
+          --output .testerarmy/upload.json
+        )
+
+        if [ "$REMOVE_AFTER" != "0" ]; then
+          args+=(--remove-after "$REMOVE_AFTER")
+        fi
+
+        npx --yes testerarmy@latest "${args[@]}"
+
+        APP_ID="$(
+          node -e "const fs = require('node:fs'); const data = JSON.parse(fs.readFileSync('.testerarmy/upload.json', 'utf8')); if (!data.uploadedAppId) throw new Error('Missing uploadedAppId in .testerarmy/upload.json'); process.stdout.write(data.uploadedAppId);"
+        )"
+        echo "app_id=$APP_ID" >> "$GITHUB_OUTPUT"
 
     - id: run
       name: Run tests
       shell: bash
       env:
         TESTERARMY_API_KEY: ${{ inputs.api_key }}
-        TESTERARMY_WEBHOOK_URL: ${{ inputs.webhook_url }}
-        TESTERARMY_APP_ID: ${{ steps.upload.outputs.app_id }}
-        TESTERARMY_COMMIT_SHA: ${{ github.sha }}
-        POLL_INTERVAL_SECONDS: ${{ inputs.poll_interval_seconds }}
-        TIMEOUT_SECONDS: ${{ inputs.timeout_seconds }}
-      run: node --experimental-strip-types "${{ github.action_path }}/src/run-tests.ts"
+        APP_ID: ${{ steps.upload.outputs.app_id }}
+        GROUP_ID: ${{ inputs.group_id }}
+        PROJECT_ID: ${{ inputs.project_id }}
+        COMMIT_SHA: ${{ github.sha }}
+        DELETE_APP_AFTER_RUN: ${{ inputs.delete_app_after_run }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+      run: |
+        set -uo pipefail
 
-    - name: Delete uploaded app
-      if: ${{ always() && inputs.delete_app_after_run == 'true' && steps.upload.outputs.app_id != '' }}
-      shell: bash
-      env:
-        TESTERARMY_API_KEY: ${{ inputs.api_key }}
-        TESTERARMY_PROJECT_ID: ${{ inputs.project_id }}
-        TESTERARMY_WEBHOOK_URL: ${{ inputs.webhook_url }}
-        TESTERARMY_APP_ID: ${{ steps.upload.outputs.app_id }}
-      run: node --experimental-strip-types "${{ github.action_path }}/src/delete-mobile-app.ts"
+        mkdir -p .testerarmy
+
+        args=(
+          ci
+          --group "$GROUP_ID"
+          --project "$PROJECT_ID"
+          --app-id "$APP_ID"
+          --commit-sha "$COMMIT_SHA"
+          --output .testerarmy/ci-result.json
+        )
+
+        if [ "$DELETE_APP_AFTER_RUN" = "true" ]; then
+          args+=(--delete-app-after-run)
+        fi
+
+        if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$PR_NUMBER" ]; then
+          args+=(--pr-number "$PR_NUMBER")
+        fi
+
+        npx --yes testerarmy@latest "${args[@]}"
+        exit_code=$?
+
+        if [ -f .testerarmy/ci-result.json ]; then
+          OVERALL_STATUS="$(
+            node -e "const fs = require('node:fs'); const data = JSON.parse(fs.readFileSync('.testerarmy/ci-result.json', 'utf8')); process.stdout.write(data.summary?.result ?? '');"
+          )"
+          echo "overall_status=$OVERALL_STATUS" >> "$GITHUB_OUTPUT"
+        fi
+
+        exit "$exit_code"
