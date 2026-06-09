@@ -7,7 +7,7 @@ branding:
 inputs:
   app_path:
     description: Path to the app build file or directory to upload.
-    required: true
+    required: false
   api_key:
     description: TesterArmy API key.
     required: true
@@ -15,8 +15,15 @@ inputs:
     description: TesterArmy project ID.
     required: true
   group_id:
-    description: TesterArmy group ID.
-    required: true
+    description: TesterArmy group ID. Required for all and test modes.
+    required: false
+  app_id:
+    description: Existing TesterArmy uploaded app ID. Required for test and dynamic_agent modes.
+    required: false
+  mode:
+    description: Action mode to run. Use all, upload, test, or dynamic_agent.
+    required: false
+    default: "all"
   platform:
     description: Mobile runtime platform. Use ios for iOS Simulator apps or android for APKs.
     required: false
@@ -32,15 +39,96 @@ inputs:
 
 outputs:
   app_id:
-    description: Uploaded TesterArmy app ID.
-    value: ${{ steps.upload.outputs.app_id }}
+    description: Uploaded or supplied TesterArmy app ID.
+    value: ${{ steps.resolve_app.outputs.app_id }}
   overall_status:
     description: Overall status of the test run (passed, failed, or timed_out).
     value: ${{ steps.run.outputs.overall_status }}
+  dynamic_agent_status:
+    description: Overall status of the dynamic PR agent run (passed, failed, timed_out, or skipped).
+    value: ${{ steps.dynamic.outputs.dynamic_agent_status }}
 
 runs:
   using: composite
   steps:
+    - id: plan
+      name: Plan action execution
+      shell: bash
+      env:
+        APP_ID: ${{ inputs.app_id }}
+        APP_PATH: ${{ inputs.app_path }}
+        DELETE_APP_AFTER_RUN: ${{ inputs.delete_app_after_run }}
+        GROUP_ID: ${{ inputs.group_id }}
+        MODE: ${{ inputs.mode }}
+      run: |
+        set -euo pipefail
+
+        run_upload=false
+        run_tests=false
+        run_dynamic=false
+        delete_after_tests=false
+
+        case "$MODE" in
+          all)
+            run_upload=true
+            run_tests=true
+
+            if [ -z "$APP_PATH" ]; then
+              echo "::error::app_path is required for $MODE mode"
+              exit 2
+            fi
+
+            if [ -z "$GROUP_ID" ]; then
+              echo "::error::group_id is required for $MODE mode"
+              exit 2
+            fi
+
+            if [ "$DELETE_APP_AFTER_RUN" = "true" ]; then
+              delete_after_tests=true
+            fi
+            ;;
+          upload)
+            run_upload=true
+
+            if [ -z "$APP_PATH" ]; then
+              echo "::error::app_path is required for $MODE mode"
+              exit 2
+            fi
+            ;;
+          test)
+            run_tests=true
+
+            if [ -z "$APP_ID" ]; then
+              echo "::error::app_id is required for $MODE mode"
+              exit 2
+            fi
+
+            if [ -z "$GROUP_ID" ]; then
+              echo "::error::group_id is required for $MODE mode"
+              exit 2
+            fi
+            ;;
+          dynamic_agent)
+            run_dynamic=true
+
+            if [ -z "$APP_ID" ]; then
+              echo "::error::app_id is required for $MODE mode"
+              exit 2
+            fi
+            ;;
+          *)
+            echo "::error::mode must be one of: all, upload, test, dynamic_agent"
+            exit 2
+            ;;
+        esac
+
+        {
+          echo "run_upload=$run_upload"
+          echo "run_tests=$run_tests"
+          echo "run_dynamic=$run_dynamic"
+          echo "delete_after_tests=$delete_after_tests"
+        } >> "$GITHUB_OUTPUT"
+
     - name: Set up Node.js
       uses: actions/setup-node@v5
       with:
@@ -48,6 +136,7 @@ runs:
 
     - id: upload
       name: Upload mobile app
+      if: ${{ steps.plan.outputs.run_upload == 'true' }}
       shell: bash
       env:
         APP_PATH: ${{ inputs.app_path }}
@@ -77,23 +166,41 @@ runs:
         )"
         echo "app_id=$APP_ID" >> "$GITHUB_OUTPUT"
 
+    - id: resolve_app
+      name: Resolve app ID
+      shell: bash
+      env:
+        INPUT_APP_ID: ${{ inputs.app_id }}
+        UPLOADED_APP_ID: ${{ steps.upload.outputs.app_id }}
+      run: |
+        set -euo pipefail
+
+        APP_ID="$UPLOADED_APP_ID"
+        if [ -z "$APP_ID" ]; then
+          APP_ID="$INPUT_APP_ID"
+        fi
+
+        echo "app_id=$APP_ID" >> "$GITHUB_OUTPUT"
+
     - id: run
       name: Run tests
+      if: ${{ steps.plan.outputs.run_tests == 'true' }}
       shell: bash
       env:
         TESTERARMY_API_KEY: ${{ inputs.api_key }}
-        APP_ID: ${{ steps.upload.outputs.app_id }}
+        APP_ID: ${{ steps.resolve_app.outputs.app_id }}
         GROUP_ID: ${{ inputs.group_id }}
         PROJECT_ID: ${{ inputs.project_id }}
         PLATFORM: ${{ inputs.platform }}
         COMMIT_SHA: ${{ github.sha }}
-        DELETE_APP_AFTER_RUN: ${{ inputs.delete_app_after_run }}
+        DELETE_AFTER_TESTS: ${{ steps.plan.outputs.delete_after_tests }}
         EVENT_NAME: ${{ github.event_name }}
         PR_NUMBER: ${{ github.event.pull_request.number || '' }}
       run: |
         set -uo pipefail
 
         mkdir -p .testerarmy
+        rm -f .testerarmy/ci-result.json
 
         args=(
           ci
@@ -105,7 +212,7 @@ runs:
           --output .testerarmy/ci-result.json
         )
 
-        if [ "$DELETE_APP_AFTER_RUN" = "true" ]; then
+        if [ "$DELETE_AFTER_TESTS" = "true" ]; then
           args+=(--delete-app-after-run)
         fi
 
@@ -121,6 +228,77 @@ runs:
             node -e "const fs = require('node:fs'); const data = JSON.parse(fs.readFileSync('.testerarmy/ci-result.json', 'utf8')); process.stdout.write(data.summary?.result ?? '');"
           )"
           echo "overall_status=$OVERALL_STATUS" >> "$GITHUB_OUTPUT"
+        fi
+
+        exit "$exit_code"
+
+    - id: dynamic
+      name: Run dynamic PR agent
+      if: ${{ steps.plan.outputs.run_dynamic == 'true' }}
+      shell: bash
+      env:
+        TESTERARMY_API_KEY: ${{ inputs.api_key }}
+        APP_ID: ${{ steps.resolve_app.outputs.app_id }}
+        PROJECT_ID: ${{ inputs.project_id }}
+        PLATFORM: ${{ inputs.platform }}
+        COMMIT_SHA: ${{ github.sha }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+        PR_TITLE: ${{ github.event.pull_request.title || '' }}
+        PR_DESCRIPTION: ${{ github.event.pull_request.body || '' }}
+        BASE_BRANCH: ${{ github.event.pull_request.base.ref || '' }}
+        HEAD_BRANCH: ${{ github.event.pull_request.head.ref || '' }}
+      run: |
+        set -uo pipefail
+
+        mkdir -p .testerarmy
+        rm -f .testerarmy/dynamic-result.json
+
+        if [ "$EVENT_NAME" != "pull_request" ] || [ -z "$PR_NUMBER" ]; then
+          echo "::notice::mode=dynamic_agent requires a pull_request event; skipping the dynamic agent."
+          echo "dynamic_agent_status=skipped" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        dynamic_pr_title="$PR_TITLE"
+        if [ -z "$dynamic_pr_title" ]; then
+          dynamic_pr_title="Pull request #$PR_NUMBER"
+        fi
+
+        args=(
+          pr
+          run-dynamic
+          --project "$PROJECT_ID"
+          --platform "$PLATFORM"
+          --app-id "$APP_ID"
+          --pr-number "$PR_NUMBER"
+          --pr-title "$dynamic_pr_title"
+          --commit-sha "$COMMIT_SHA"
+          --output .testerarmy/dynamic-result.json
+        )
+
+        if [ -n "$PR_DESCRIPTION" ]; then
+          args+=(--pr-description "$PR_DESCRIPTION")
+        fi
+
+        if [ -n "$BASE_BRANCH" ]; then
+          args+=(--base-branch "$BASE_BRANCH")
+        fi
+
+        if [ -n "$HEAD_BRANCH" ]; then
+          args+=(--head-branch "$HEAD_BRANCH")
+        fi
+
+        npx --yes testerarmy@latest "${args[@]}"
+        exit_code=$?
+
+        if [ -f .testerarmy/dynamic-result.json ]; then
+          DYNAMIC_AGENT_STATUS="$(
+            node -e "const fs = require('node:fs'); const data = JSON.parse(fs.readFileSync('.testerarmy/dynamic-result.json', 'utf8')); process.stdout.write(data.summary?.result ?? '');"
+          )"
+          echo "dynamic_agent_status=$DYNAMIC_AGENT_STATUS" >> "$GITHUB_OUTPUT"
+        elif [ "$exit_code" -ne 0 ]; then
+          echo "dynamic_agent_status=failed" >> "$GITHUB_OUTPUT"
         fi
 
         exit "$exit_code"
