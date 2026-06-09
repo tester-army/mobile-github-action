@@ -156,7 +156,7 @@ In split-job workflows, `mode: test` never deletes the supplied `app_id` by defa
 | `api_key` | Yes | — | TesterArmy API key |
 | `project_id` | Yes | — | TesterArmy project ID |
 | `group_id` | For `all`, `test` | — | TesterArmy group ID |
-| `app_id` | For `test`, `dynamic_agent` | — | Existing TesterArmy uploaded app ID |
+| `app_id` | For `test`, PR `dynamic_agent` | — | Existing TesterArmy uploaded app ID |
 | `mode` | No | `all` | Action mode: `all`, `upload`, `test`, or `dynamic_agent` |
 | `platform` | No | `ios` | Mobile runtime platform: `ios` or `android` |
 | `delete_app_after_run` | No | `true` | Ask the CLI to delete the uploaded app after terminal test runs when the same action invocation owns the upload |

@@ -18,7 +18,7 @@ inputs:
     description: TesterArmy group ID. Required for all and test modes.
     required: false
   app_id:
-    description: Existing TesterArmy uploaded app ID. Required for test and dynamic_agent modes.
+    description: Existing TesterArmy uploaded app ID. Required for test mode and dynamic_agent mode on pull request events.
     required: false
   mode:
     description: Action mode to run. Use all, upload, test, or dynamic_agent.
@@ -46,7 +46,7 @@ outputs:
     value: ${{ steps.run.outputs.overall_status }}
   dynamic_agent_status:
     description: Overall status of the dynamic PR agent run (passed, failed, timed_out, or skipped).
-    value: ${{ steps.dynamic.outputs.dynamic_agent_status }}
+    value: ${{ steps.dynamic.outputs.dynamic_agent_status || steps.plan.outputs.dynamic_agent_status }}
 
 runs:
   using: composite
@@ -58,8 +58,10 @@ runs:
         APP_ID: ${{ inputs.app_id }}
         APP_PATH: ${{ inputs.app_path }}
         DELETE_APP_AFTER_RUN: ${{ inputs.delete_app_after_run }}
+        EVENT_NAME: ${{ github.event_name }}
         GROUP_ID: ${{ inputs.group_id }}
         MODE: ${{ inputs.mode }}
+        PR_NUMBER: ${{ github.event.pull_request.number || '' }}
       run: |
         set -euo pipefail
 
@@ -67,6 +69,7 @@ runs:
         run_tests=false
         run_dynamic=false
         delete_after_tests=false
+        dynamic_agent_status=
 
         case "$MODE" in
           all)
@@ -109,11 +112,14 @@ runs:
             fi
             ;;
           dynamic_agent)
-            run_dynamic=true
-
-            if [ -z "$APP_ID" ]; then
+            if [ "$EVENT_NAME" != "pull_request" ] || [ -z "$PR_NUMBER" ]; then
+              echo "::notice::mode=dynamic_agent requires a pull_request event; skipping the dynamic agent."
+              dynamic_agent_status=skipped
+            elif [ -z "$APP_ID" ]; then
               echo "::error::app_id is required for $MODE mode"
               exit 2
+            else
+              run_dynamic=true
             fi
             ;;
           *)
@@ -127,6 +133,7 @@ runs:
           echo "run_tests=$run_tests"
           echo "run_dynamic=$run_dynamic"
           echo "delete_after_tests=$delete_after_tests"
+          echo "dynamic_agent_status=$dynamic_agent_status"
         } >> "$GITHUB_OUTPUT"
 
     - name: Set up Node.js
@@ -167,7 +174,7 @@ runs:
         echo "app_id=$APP_ID" >> "$GITHUB_OUTPUT"
 
     - id: resolve_app
-      name: Resolve app ID
+      name: Resolve Mobile App
       shell: bash
       env:
         INPUT_APP_ID: ${{ inputs.app_id }}
@@ -242,7 +249,6 @@ runs:
         PROJECT_ID: ${{ inputs.project_id }}
         PLATFORM: ${{ inputs.platform }}
         COMMIT_SHA: ${{ github.sha }}
-        EVENT_NAME: ${{ github.event_name }}
         PR_NUMBER: ${{ github.event.pull_request.number || '' }}
         PR_TITLE: ${{ github.event.pull_request.title || '' }}
         PR_DESCRIPTION: ${{ github.event.pull_request.body || '' }}
@@ -253,12 +259,6 @@ runs:
 
         mkdir -p .testerarmy
         rm -f .testerarmy/dynamic-result.json
-
-        if [ "$EVENT_NAME" != "pull_request" ] || [ -z "$PR_NUMBER" ]; then
-          echo "::notice::mode=dynamic_agent requires a pull_request event; skipping the dynamic agent."
-          echo "dynamic_agent_status=skipped" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
 
         dynamic_pr_title="$PR_TITLE"
         if [ -z "$dynamic_pr_title" ]; then
